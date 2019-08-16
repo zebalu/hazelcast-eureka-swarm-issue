@@ -1,142 +1,38 @@
-# Hazelcast Embedded with Eureka discovery
+# About this repository
 
-This is a sample Spring Boot application with embedded Hazelcast, which presents forming a Hazelcast cluster using the [Hazelcast Eureka plugin](https://github.com/hazelcast/hazelcast-eureka).
+This repository was created to demonstrate an issue in Hazelcast CPSubsystem. The original code is 
+a copy of [this example](https://github.com/hazelcast/hazelcast-code-samples/tree/master/hazelcast-integration/eureka/springboot-embedded).
+(The copied state was [this commit](https://github.com/hazelcast/hazelcast-code-samples/commit/ee34ba8f260deb0befa1b39866161949b334f535)).
 
-## Introduction
+## How to use
 
-This Code Sample contains 4 projects:
- * `eureka-server` - Eureka Server (not related to Hazelcast)
- * `hazelcast-only` - Spring Boot Application which registers Hazelcast member in Eureka
- * `hazelcast-separate-client` - Spring Boot Application which registers both Hazelcast member and the Spring Boot application itself in Eureka (Hazelcast member uses a separate Eureka Client than the application)
- * `hazelcast-metadata` - Spring Boot Application which registers both Hazelcast member and the Spring Boot application itself in Eureka (Hazelcast member uses the same Eureka Client than the application)
- 
- To start any interaction, you need to build all the projects with the following command.
- 
-    $ mvn clean package
+1. build the projects with  `./gradlew build`
+2. build the images with `docker-compose build`
+3. start a docker-swarm with `docker swarm init` command (later you can destroy it with `docker swarm leave --force`)
+4. deploy the claster with `docker stack deploy --compose-file docker-compose.yml hz-issue` (in the end you can remove the cluster with `docker stack rm hz-issue`)
+5. in the end you will have eureka on port: **8761** and the hazelcast example on port: **8080**
+6. you can put entries to a map with url: `http://localhost:8080/put?key=some-key&value=some-value` and read them with `http://localhost:8080/get?key=some-key`
+7. you can modify the same map guarded by hazelcast CPSubsystem locks with: `http://localhost:8080/lock-put?key=some-key&value=some-value` and `http://localhost:8080/lock-get?key=some-key`
 
-## 1. Start Eureka server
+## Modifications to the original example
 
-To use Eureka discovery, you need first to start the Eureka server. Usually you would start multiple instances to provide high availability, but in this Code Sample a single localhost instance is good enough.
+In class [Application](https://github.com/zebalu/hazelcast-eureka-swarm-issue/blob/master/hazelcast-separate-client/src/main/java/com/hazelcast/samples/eureka/Application.java) 
+CPSubsystem is configured to have 4 members and 3 members shuld form the groups. Also: url of eureka is 
+changed from `localhost` to the service name in the swarm. Networking interface was set to be `10.0.*.*`
+so hazelcast registers the swarm network interface to eureka and the nodes can talk.
 
-    $ java -jar eureka-server/target/eureka-server-0.1-SNAPSHOT.jar
+We have new endpoints 
+with locks, defined in [LockCommandController](https://github.com/zebalu/hazelcast-eureka-swarm-issue/blob/master/hazelcast-separate-client/src/main/java/com/hazelcast/samples/eureka/LockCommandController.java)
+which uses locks from CPSubsystem.
 
-You can see that Eureka Sever started correctly by opening the browser at: http://localhost:8761.
+## How the issue shows itself
 
-![Eureka](markdown/eureka.png)
+Sometimes when the nodes start, CPSubsystem can not form a cluster. The 4 members can form 2 clusters 
+(2 with 2 members _or_ 1 with 1 meber and 1 with 3 members) and can not provide you a lock. You will see
+a lot of `CP Subsystem is waiting for 4 members to join the cluster. Current member count: 2` log 
+messages, or like this:
 
-## 2.1 Hazelcast Only
+![Two separate clusters](markdown/case_of_separate_clusters.png)
 
-The first project `hazelcast-only` presents how to use the Eureka-based Hazelcast discovery if you don't need to register your Spring Boot application at the same time.
+It seems that hazelcast can never recover from a state like this.
 
-The simplest Hazelcast configuration looks as follows.
-
-```java
-@Bean
-public Config hazelcastConfig() {
-    Config config = new Config();
-    config.getNetworkConfig().getJoin().getMulticastConfig().setEnabled(false);
-    config.getNetworkConfig().getJoin().getEurekaConfig()
-          .setEnabled(true)
-          .setProperty("self-registration", "true")
-          .setProperty("namespace", "hazelcast");
-    return config;
-}
-```
-
-You also need to configure the Eureka Client specific properties in the `eureka-client.properties` file.
-
-```properties
-hazelcast.shouldUseDns=false
-hazelcast.name=hazelcast-only
-hazelcast.serviceUrl.default=http://localhost:8761/eureka/
-```
-
-With such configuration you can start two Spring Boot applications.
-
-    $ java -jar hazelcast-only/target/hazelcast-only-0.1-SNAPSHOT.jar --server.port=8081 --hazelcast.port=5703
-    $ java -jar hazelcast-only/target/hazelcast-only-0.1-SNAPSHOT.jar --server.port=8080 --hazelcast.port=5701
-
-You should see in the logs that Hazelcast members formed a cluster together.
-
-```
-...
-Members {size:2, ver:2} [
-        Member [172.16.8.53]:5703 - 48d1ff51-f7d4-477d-aba6-05fea7ccce4c
-        Member [172.16.8.53]:5701 - 800fad2b-3aaf-4f28-b944-e75572664e40 this
-]
-...
-```
-
-In the Eureka web console, you should see the following "HAZELCAST-ONLY" entries.
-
-![Eureka Hazelcast Only](markdown/eureka-hazelcast-only.png)
-
-That is the simplest Eureka-based Hazelcast discovery. Sometimes, however, you need to have both your application and Hazelcast registered in Eureka.
-
-## 2.2 Hazelcast with separate Eureka Client
-
-If you need to have your application registered in Eureka as well, then the simplest way is to use separate Eureka clients. Then, Hazelcast is registered completely separately and it's visible in Eureka as a separate application.
-
-To achieve this effect, your Hazelcast configuration is exactly the same as in the previous point, but you need to add the Eureka Client configuration for your Spring Boot Application. You can do it by adding `@EnableDiscoveryClient` to your `Application` class and defining the following `bootstrap.properties` file.
-
-```properties
-spring.application.name=spring-boot-application
-``` 
-
-In this case, Hazelcast will be registered under the name "HAZELCAST-SEPARATE-CLIENT" and the application will be registered under the name "SPRING-BOOT-APPLICATION".
-
-With such configuration you can start two Spring Boot applications.
-
-    $ java -jar hazelcast-separate-client/target/hazelcast-separate-client-0.1-SNAPSHOT.jar --server.port=8081 --hazelcast.port=5703
-    $ java -jar hazelcast-separate-client/target/hazelcast-separate-client-0.1-SNAPSHOT.jar --server.port=8080 --hazelcast.port=5701
-        
-Hazelcast members should form a cluster together as in the previous section. You should also see two separate entries in the Eureka web console.
-
-![Eureka Hazelcast Separate Client](markdown/eureka-hazelcast-separate-client.png)
-
-## 2.3 Hazelcast reusing Eureka Client (Metadata)
-
-Sometimes, you may not want to have Hazelcast registered as a separate application in Eureka. After all, Hazelcast is not a separate application, but a library embedded inside your Spring Boot application. In that case the Eureka plugin provides a solution to store the information about Hazelcast `host` and `port` in the Metadata of the application itself, by using the same Eureka client as the application.
-
-Change your Hazelcast configuration to include the metadata-related properties.
-
-```java
-@Bean
-public Config hazelcastConfig(EurekaClient eurekaClient) {
-    EurekaOneDiscoveryStrategyFactory.setEurekaClient(eurekaClient);
-    Config config = new Config();
-    config.getNetworkConfig().getJoin().getMulticastConfig().setEnabled(false);
-    config.getNetworkConfig().getJoin().getEurekaConfig()
-          .setEnabled(true)
-          .setProperty("self-registration", "true")
-          .setProperty("namespace", "hazelcast")
-          .setProperty("use-metadata-for-host-and-port", "true");
-    return config;
-}
-```
-
-With such configuration you can start two Spring Boot applications.
-
-    $ java -jar hazelcast-metadata/target/hazelcast-metadata-0.1-SNAPSHOT.jar --server.port=8081 --hazelcast.port=5703
-    $ java -jar hazelcast-metadata/target/hazelcast-metadata-0.1-SNAPSHOT.jar --server.port=8080 --hazelcast.port=5701
-        
-Hazelcast members should form a cluster together as in the previous section. You should also see two separate entries in the Eureka web console.
-
-![Eureka Hazelcast Separate Client](markdown/eureka-hazelcast-metadata.png)
-
-## 3. Verifying the configuration
-
-No matter which configuration you followed, you should have your Hazelcast cluster formed. Each Hazelcast instance is embedded into a web service with a few endpoints dedicated to operate on the Hazelcast data. We’ll use two of these endpoints to check that Hazelcast works correctly:
-* `/put`: inserts a key-value entry into Hazelcast
-* `/get`: reads a value from Hazelcast by the key
-
-Let’s first insert a key-value entry into the first web service.
-
-    $ curl http://localhost:8080/put?key=some-key\&value=some-value
-
-Then, we can read the value from the second web service.
-
-    $ curl http://localhost:8081/get?key=some-key
-    {"response":"some-value"}
-
-We received the expected value from the second service, which means that the services work correctly and that the embedded Hazelcast instances formed a cluster together.
