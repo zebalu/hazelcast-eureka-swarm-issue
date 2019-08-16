@@ -1,0 +1,4 @@
+rootProject.name='hazelcast-eureka-issue'
+
+include 'eureka-server'
+include 'hazelcast-separate-client'

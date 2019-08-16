@@ -1,0 +1,19 @@
+version: '3'
+services:
+  eureka:
+    build: 
+      context: ./
+      dockerfile: eureka.docker
+    image: 'eureka'
+    ports:
+      - "8761:8761"
+  hazelcast:
+    build: 
+      context: ./
+      dockerfile: hazelcast.docker
+    image: 'hazelcast'
+    ports:
+      - "8080:8080"
+    deploy:
+      replicas: 4
+  
