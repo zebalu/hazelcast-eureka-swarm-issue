@@ -1,5 +1,17 @@
 .gradle
 /build/
+.settings
+.project
+eureka-server/.settings
+eureka-server/bin
+eureka-server/build
+eureka-server/.classpath
+eureka-server/.project
+hazelcast-separate-client/.settings
+hazelcast-separate-client/bin
+hazelcast-separate-client/build
+hazelcast-separate-client/.classpath
+hazelcast-separate-client/.project
 
 # Ignore Gradle GUI config
 gradle-app.setting
